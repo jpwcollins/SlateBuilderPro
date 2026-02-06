@@ -1,9 +1,9 @@
 export function getBlockMinutes(date: Date): number {
-  const day = date.getDay(); // 0 Sun, 1 Mon, 2 Tue
-  const isTuesday = day === 2;
-  if (isTuesday) {
-    const weekOfMonth = getWeekOfMonth(date);
-    if (weekOfMonth === 2 || weekOfMonth === 4) {
+  const day = date.getDay(); // 0 Sun, 1 Mon, 4 Thu
+  const isThursday = day === 4;
+  if (isThursday) {
+    const occurrence = getWeekdayOccurrenceInMonth(date);
+    if (occurrence === 2 || occurrence === 4) {
       return 420; // 09:00-16:00
     }
   }
@@ -12,10 +12,10 @@ export function getBlockMinutes(date: Date): number {
 
 export function getBlockStartMinutes(date: Date): number {
   const day = date.getDay();
-  const isTuesday = day === 2;
-  if (isTuesday) {
-    const weekOfMonth = getWeekOfMonth(date);
-    if (weekOfMonth === 2 || weekOfMonth === 4) {
+  const isThursday = day === 4;
+  if (isThursday) {
+    const occurrence = getWeekdayOccurrenceInMonth(date);
+    if (occurrence === 2 || occurrence === 4) {
       return 9 * 60;
     }
   }
@@ -30,9 +30,15 @@ export function formatMinutesToTime(totalMinutes: number): string {
   return `${hh}${mm}`;
 }
 
-function getWeekOfMonth(date: Date): number {
+function getWeekdayOccurrenceInMonth(date: Date): number {
+  const dayOfWeek = date.getDay();
   const dayOfMonth = date.getDate();
-  const firstDay = new Date(date.getFullYear(), date.getMonth(), 1).getDay();
-  const offset = (firstDay + 6) % 7; // align Monday=0
-  return Math.floor((dayOfMonth + offset - 1) / 7) + 1;
+  let count = 0;
+  for (let d = 1; d <= dayOfMonth; d += 1) {
+    const current = new Date(date.getFullYear(), date.getMonth(), d);
+    if (current.getDay() === dayOfWeek) {
+      count += 1;
+    }
+  }
+  return count;
 }

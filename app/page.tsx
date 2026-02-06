@@ -303,16 +303,6 @@ export default function Home() {
                 onChange={handleUpload}
                 className="w-full text-sm"
               />
-              <div className="mt-2 text-xs text-sand-700">
-                Need a template?{" "}
-                <button
-                  type="button"
-                  className="font-semibold text-slateBlue-700 underline"
-                  onClick={() => downloadFile("waitlist_template.csv", getCsvTemplate())}
-                >
-                  Download sample CSV
-                </button>
-              </div>
             </div>
 
 
@@ -334,22 +324,6 @@ export default function Home() {
                   <input
                     type="radio"
                     name="priority"
-                    value="ttt"
-                    checked={priorityMode === "ttt"}
-                    onChange={() => setPriorityMode("ttt")}
-                    className="mt-1"
-                  />
-                  <span>
-                    <span className="font-semibold">Prioritize by absolute wait time only</span>
-                    <span className="block text-xs text-sand-600">
-                      Sort by time-to-target (TTT) regardless of urgency class.
-                    </span>
-                  </span>
-                </label>
-                <label className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="priority"
                     value="urgency_then_ttt"
                     checked={priorityMode === "urgency_then_ttt"}
                     onChange={() => setPriorityMode("urgency_then_ttt")}
@@ -361,6 +335,22 @@ export default function Home() {
                     </span>
                     <span className="block text-xs text-sand-600">
                       Sort by benchmark (2w, 4w, 6w, 12w, 26w) and then TTT.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    name="priority"
+                    value="ttt"
+                    checked={priorityMode === "ttt"}
+                    onChange={() => setPriorityMode("ttt")}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-semibold">Prioritize by absolute wait time only</span>
+                    <span className="block text-xs text-sand-600">
+                      Sort by time-to-target (TTT) regardless of urgency class.
                     </span>
                   </span>
                 </label>
@@ -414,14 +404,6 @@ export default function Home() {
                 ))}
               </select>
             </label>
-
-            <div className="rounded-lg border border-sand-200 bg-white/70 px-4 py-3 text-sm text-sand-800">
-              <p className="font-semibold text-sand-900">Block length</p>
-              <p className="mt-1">{blockMinutes} minutes</p>
-              <p className="mt-2 text-xs text-sand-700">
-                08:00–16:00 standard. 2nd/4th Tuesday = 09:00–16:00.
-              </p>
-            </div>
           </div>
         </div>
       </section>
@@ -433,6 +415,14 @@ export default function Home() {
               <h2 className="text-lg font-semibold text-slateBlue-900">3. Optimized Slates</h2>
               <p className="text-sm text-sand-700">Drag to reorder for clinical priorities.</p>
             </div>
+          </div>
+
+          <div className="mt-4 rounded-lg border border-sand-200 bg-white/70 px-4 py-3 text-sm text-sand-800">
+            <p className="font-semibold text-sand-900">Block length</p>
+            <p className="mt-1">{blockMinutes} minutes</p>
+            <p className="mt-2 text-xs text-sand-700">
+              Standard day: 08:00–16:00 (480 min). 2nd &amp; 4th Thursday: 09:00–16:00 (420 min).
+            </p>
           </div>
 
           {!slates && (
@@ -568,7 +558,14 @@ export default function Home() {
             <div>
               <h2 className="text-lg font-semibold text-slateBlue-900">Priority Waitlist</h2>
               <p className="text-sm text-sand-700">
-                Sorted by urgency class (2w→26w), then days to target.
+                {priorityMode === "ttt"
+                  ? "Sorted by time-to-target (TTT) regardless of urgency class."
+                  : "Sorted by urgency class (2w→26w), then days to target."}
+              </p>
+              <p className="mt-1 text-xs text-sand-600">
+                {selectedSurgeon
+                  ? `${orderedByUrgency.length} cases for ${selectedSurgeon}`
+                  : `${orderedByUrgency.length} cases`}
               </p>
             </div>
             <button
