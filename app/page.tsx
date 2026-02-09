@@ -18,11 +18,18 @@ function downloadFile(filename: string, contents: string) {
   URL.revokeObjectURL(url);
 }
 
+function csvSafe(value: string) {
+  return value.replace(/,/g, "");
+}
+
 export default function Home() {
   const [csvText, setCsvText] = useState("");
   const [cases, setCases] = useState<PatientCase[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [durationOverrides, setDurationOverrides] = useState<Record<string, number>>({});
+  const [flagOverrides, setFlagOverrides] = useState<
+    Record<string, { osa?: boolean; diabetes?: boolean }>
+  >({});
   const [defaultDurations, setDefaultDurations] = useState({
     hysteroscopy: 60,
     laparoscopy: 90,
@@ -91,9 +98,21 @@ export default function Home() {
     return { ...item, estimatedDurationMin: duration };
   };
 
+  const applyFlagOverrides = (item: PatientCase): PatientCase => {
+    const override = flagOverrides[item.caseId];
+    if (!override) return item;
+    return {
+      ...item,
+      flags: {
+        ...item.flags,
+        ...override,
+      },
+    };
+  };
+
   const casesWithDefaults = useMemo(() => {
-    return cases.map((item) => applyDefaultDuration(item));
-  }, [cases, defaultDurations]);
+    return cases.map((item) => applyFlagOverrides(applyDefaultDuration(item)));
+  }, [cases, defaultDurations, flagOverrides]);
 
   const filteredCases = useMemo(() => {
     if (!selectedSurgeon) return casesWithDefaults;
@@ -109,9 +128,25 @@ export default function Home() {
     });
   }, [filteredCases, durationOverrides]);
 
-  const sortByPriorityMode = (items: ScoredCase[] | PatientCase[]) => {
+  const sortForWaitlist = (items: ScoredCase[] | PatientCase[]) => {
     const order = [2, 4, 6, 12, 26];
     return [...items].sort((a, b) => {
+      if (priorityMode === "ttt") {
+        return a.timeToTargetDays - b.timeToTargetDays;
+      }
+      const aGroup = order.indexOf(a.benchmarkWeeks);
+      const bGroup = order.indexOf(b.benchmarkWeeks);
+      if (aGroup !== bGroup) return aGroup - bGroup;
+      return a.timeToTargetDays - b.timeToTargetDays;
+    });
+  };
+
+  const sortForSlate = (items: ScoredCase[] | PatientCase[]) => {
+    const order = [2, 4, 6, 12, 26];
+    return [...items].sort((a, b) => {
+      const aFlag = a.flags?.diabetes ? 0 : a.flags?.osa ? 1 : 2;
+      const bFlag = b.flags?.diabetes ? 0 : b.flags?.osa ? 1 : 2;
+      if (aFlag !== bFlag) return aFlag - bFlag;
       if (priorityMode === "ttt") {
         return a.timeToTargetDays - b.timeToTargetDays;
       }
@@ -137,7 +172,7 @@ export default function Home() {
       setOrderedSlates([]);
       return;
     }
-    setOrderedSlates(slates.map((item) => sortByPriorityMode(item.selected)));
+    setOrderedSlates(slates.map((item) => sortForSlate(item.selected)));
   }, [slates, priorityMode]);
 
   const blockMinutes = useMemo(() => {
@@ -223,10 +258,20 @@ export default function Home() {
     });
   };
 
+  const updateFlag = (caseId: string, flag: "osa" | "diabetes", value: boolean) => {
+    setFlagOverrides((prev) => ({
+      ...prev,
+      [caseId]: {
+        ...prev[caseId],
+        [flag]: value,
+      },
+    }));
+  };
+
   const resetDurationOverrides = () => {
     setDurationOverrides({});
     if (!slates) return;
-    setOrderedSlates(slates.map((item) => sortByPriorityMode(item.selected)));
+    setOrderedSlates(slates.map((item) => sortForSlate(item.selected)));
   };
 
   const saveDefaultDurations = () => {
@@ -275,9 +320,9 @@ export default function Home() {
         String(item.benchmarkWeeks),
         String(item.timeToTargetDays),
         String(item.estimatedDurationMin),
-        item.surgeonId,
-        item.flags.osa ? "yes" : "no",
-        item.flags.diabetes ? "yes" : "no",
+        csvSafe(item.surgeonId),
+        item.flags?.osa ? "yes" : "no",
+        item.flags?.diabetes ? "yes" : "no",
         item.riskScore.toFixed(2),
       ]);
     });
@@ -295,7 +340,7 @@ export default function Home() {
   };
 
   const orderedByUrgency = useMemo(() => {
-    return sortByPriorityMode(filteredCasesWithOverrides);
+    return sortForWaitlist(filteredCasesWithOverrides);
   }, [filteredCasesWithOverrides, priorityMode]);
 
   const selectedCaseIds = useMemo(() => {
@@ -318,6 +363,8 @@ export default function Home() {
         "estimated_duration_min",
         "surgeon_id",
         "procedure_name",
+        "osa",
+        "diabetes",
       ],
     ];
     orderedByUrgency.forEach((item, index) => {
@@ -328,8 +375,10 @@ export default function Home() {
         String(item.benchmarkWeeks),
         String(item.timeToTargetDays),
         String(item.estimatedDurationMin),
-        item.surgeonId,
+        csvSafe(item.surgeonId),
         item.procedureName ?? "",
+        item.flags?.osa ? "yes" : "no",
+        item.flags?.diabetes ? "yes" : "no",
       ]);
     });
     const csv = rows.map((row) => row.join(",")).join("\n");
@@ -732,6 +781,28 @@ export default function Home() {
                                 </span>
                               )}
                             </div>
+                            <div className="flex items-center gap-2">
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(item.flags.diabetes)}
+                                  onChange={(event) =>
+                                    updateFlag(item.caseId, "diabetes", event.target.checked)
+                                  }
+                                />
+                                Diabetes
+                              </label>
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(item.flags.osa)}
+                                  onChange={(event) =>
+                                    updateFlag(item.caseId, "osa", event.target.checked)
+                                  }
+                                />
+                                OSA
+                              </label>
+                            </div>
                             <label className="flex items-center gap-2">
                               Duration (min)
                               <input
@@ -793,6 +864,16 @@ export default function Home() {
                   Benchmark {item.benchmarkWeeks}w · TTT {item.timeToTargetDays}d
                 </div>
                 <div className="mt-1 flex flex-wrap gap-2">
+                  {item.flags?.diabetes && (
+                    <span className="rounded-full bg-sand-100 px-2 py-1 text-xs text-sand-800">
+                      Diabetes
+                    </span>
+                  )}
+                  {item.flags?.osa && (
+                    <span className="rounded-full bg-sand-100 px-2 py-1 text-xs text-sand-800">
+                      OSA
+                    </span>
+                  )}
                   {item.inpatient && (
                     <span className="rounded-full bg-sand-200 px-2 py-1 text-xs text-sand-800">
                       Inpatient
@@ -803,6 +884,28 @@ export default function Home() {
                       Slated
                     </span>
                   )}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-2 text-xs text-sand-700">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(item.flags?.diabetes)}
+                      onChange={(event) =>
+                        updateFlag(item.caseId, "diabetes", event.target.checked)
+                      }
+                    />
+                    Diabetes
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(item.flags?.osa)}
+                      onChange={(event) =>
+                        updateFlag(item.caseId, "osa", event.target.checked)
+                      }
+                    />
+                    OSA
+                  </label>
                 </div>
                 {item.procedureName && (
                   <div className="text-xs text-sand-600">{item.procedureName}</div>
