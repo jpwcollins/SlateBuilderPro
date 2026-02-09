@@ -128,7 +128,7 @@ export default function Home() {
     });
   }, [filteredCases, durationOverrides]);
 
-  const sortForWaitlist = (items: ScoredCase[] | PatientCase[]) => {
+  const sortForWaitlist = (items: PatientCase[]) => {
     const order = [2, 4, 6, 12, 26];
     return [...items].sort((a, b) => {
       if (priorityMode === "ttt") {
@@ -141,7 +141,7 @@ export default function Home() {
     });
   };
 
-  const sortForSlate = (items: ScoredCase[] | PatientCase[]) => {
+  const sortForSlate = (items: ScoredCase[]) => {
     const order = [2, 4, 6, 12, 26];
     return [...items].sort((a, b) => {
       const aFlag = a.flags?.diabetes ? 0 : a.flags?.osa ? 1 : 2;
