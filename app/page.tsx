@@ -22,6 +22,14 @@ export default function Home() {
   const [csvText, setCsvText] = useState("");
   const [cases, setCases] = useState<PatientCase[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [durationOverrides, setDurationOverrides] = useState<Record<string, number>>({});
+  const [defaultDurations, setDefaultDurations] = useState({
+    hysteroscopy: 60,
+    laparoscopy: 90,
+    hysterectomy: 180,
+    other: 60,
+  });
+  const [defaultsSavedAt, setDefaultsSavedAt] = useState<string | null>(null);
   const [priorityMode, setPriorityMode] = useState<"ttt" | "urgency_then_ttt">(
     "urgency_then_ttt"
   );
@@ -51,15 +59,55 @@ export default function Home() {
     }
   }, [csvText, selectedSurgeon]);
 
+  useEffect(() => {
+    const stored = window.localStorage.getItem("slatebuilder-default-durations");
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as Partial<typeof defaultDurations>;
+      setDefaultDurations((prev) => ({
+        ...prev,
+        ...parsed,
+      }));
+    } catch {
+      // ignore malformed storage
+    }
+  }, []);
+
   const surgeons = useMemo(() => {
     const unique = new Set(cases.map((item) => item.surgeonId));
     return Array.from(unique).sort((a, b) => a.localeCompare(b));
   }, [cases]);
 
+  const applyDefaultDuration = (item: PatientCase): PatientCase => {
+    const name = (item.procedureName ?? "").toLowerCase();
+    let duration = defaultDurations.other;
+    if (name.includes("hysterectomy")) {
+      duration = defaultDurations.hysterectomy;
+    } else if (name.includes("hysteroscop")) {
+      duration = defaultDurations.hysteroscopy;
+    } else if (name.includes("laparoscop")) {
+      duration = defaultDurations.laparoscopy;
+    }
+    return { ...item, estimatedDurationMin: duration };
+  };
+
+  const casesWithDefaults = useMemo(() => {
+    return cases.map((item) => applyDefaultDuration(item));
+  }, [cases, defaultDurations]);
+
   const filteredCases = useMemo(() => {
-    if (!selectedSurgeon) return cases;
-    return cases.filter((item) => item.surgeonId === selectedSurgeon);
-  }, [cases, selectedSurgeon]);
+    if (!selectedSurgeon) return casesWithDefaults;
+    return casesWithDefaults.filter((item) => item.surgeonId === selectedSurgeon);
+  }, [casesWithDefaults, selectedSurgeon]);
+
+  const filteredCasesWithOverrides = useMemo(() => {
+    if (Object.keys(durationOverrides).length === 0) return filteredCases;
+    return filteredCases.map((item) => {
+      const override = durationOverrides[item.caseId];
+      if (!override) return item;
+      return { ...item, estimatedDurationMin: override };
+    });
+  }, [filteredCases, durationOverrides]);
 
   const sortByPriorityMode = (items: ScoredCase[] | PatientCase[]) => {
     const order = [2, 4, 6, 12, 26];
@@ -75,14 +123,14 @@ export default function Home() {
   };
 
   const slates = useMemo(() => {
-    if (filteredCases.length === 0) return null;
+    if (filteredCasesWithOverrides.length === 0) return null;
     const dates = slateDates
       .slice(0, slateCount)
       .filter(Boolean)
       .map((date) => new Date(`${date}T00:00:00`));
     if (dates.length === 0) return null;
-    return optimizeSlatesForDates(filteredCases, dates);
-  }, [filteredCases, slateDates, slateCount]);
+    return optimizeSlatesForDates(filteredCasesWithOverrides, dates);
+  }, [filteredCasesWithOverrides, slateDates, slateCount]);
 
   useEffect(() => {
     if (!slates) {
@@ -160,6 +208,35 @@ export default function Home() {
     });
   };
 
+  const updateDuration = (slateIndex: number, caseId: string, value: string) => {
+    const minutes = Number(value);
+    if (!Number.isFinite(minutes) || minutes <= 0) return;
+    setDurationOverrides((prev) => ({ ...prev, [caseId]: minutes }));
+    setOrderedSlates((prev) => {
+      const next = prev.map((slate) => [...slate]);
+      const slate = next[slateIndex];
+      if (!slate) return prev;
+      const idx = slate.findIndex((item) => item.caseId === caseId);
+      if (idx < 0) return prev;
+      slate[idx] = { ...slate[idx], estimatedDurationMin: minutes };
+      return next;
+    });
+  };
+
+  const resetDurationOverrides = () => {
+    setDurationOverrides({});
+    if (!slates) return;
+    setOrderedSlates(slates.map((item) => sortByPriorityMode(item.selected)));
+  };
+
+  const saveDefaultDurations = () => {
+    window.localStorage.setItem(
+      "slatebuilder-default-durations",
+      JSON.stringify(defaultDurations)
+    );
+    setDefaultsSavedAt(new Date().toLocaleTimeString());
+  };
+
   const downloadSlateCsv = (slateIndex: number) => {
     if (!slates || !orderedSlates[slateIndex]) return;
     const orderedSlate = orderedSlates[slateIndex];
@@ -218,8 +295,16 @@ export default function Home() {
   };
 
   const orderedByUrgency = useMemo(() => {
-    return sortByPriorityMode(filteredCases);
-  }, [filteredCases, priorityMode]);
+    return sortByPriorityMode(filteredCasesWithOverrides);
+  }, [filteredCasesWithOverrides, priorityMode]);
+
+  const selectedCaseIds = useMemo(() => {
+    const ids = new Set<string>();
+    orderedSlates.forEach((slate) => {
+      slate.forEach((item) => ids.add(item.caseId));
+    });
+    return ids;
+  }, [orderedSlates]);
 
   const downloadPriorityCsv = () => {
     if (orderedByUrgency.length === 0) return;
@@ -356,6 +441,86 @@ export default function Home() {
                 </label>
               </div>
             </div>
+
+            <div className="rounded-xl border border-sand-200 bg-white/70 p-4 text-sm text-sand-800">
+              <p className="font-semibold text-sand-900">Default case durations (min)</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="flex items-center justify-between gap-3 text-xs text-sand-700">
+                  Hysteroscopy
+                  <input
+                    type="number"
+                    min={10}
+                    step={5}
+                    value={defaultDurations.hysteroscopy}
+                    onChange={(event) =>
+                      setDefaultDurations((prev) => ({
+                        ...prev,
+                        hysteroscopy: Number(event.target.value),
+                      }))
+                    }
+                    className="w-20 rounded-md border border-sand-200 bg-white px-2 py-1 text-xs"
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 text-xs text-sand-700">
+                  Laparoscopy
+                  <input
+                    type="number"
+                    min={10}
+                    step={5}
+                    value={defaultDurations.laparoscopy}
+                    onChange={(event) =>
+                      setDefaultDurations((prev) => ({
+                        ...prev,
+                        laparoscopy: Number(event.target.value),
+                      }))
+                    }
+                    className="w-20 rounded-md border border-sand-200 bg-white px-2 py-1 text-xs"
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 text-xs text-sand-700">
+                  Hysterectomy
+                  <input
+                    type="number"
+                    min={10}
+                    step={5}
+                    value={defaultDurations.hysterectomy}
+                    onChange={(event) =>
+                      setDefaultDurations((prev) => ({
+                        ...prev,
+                        hysterectomy: Number(event.target.value),
+                      }))
+                    }
+                    className="w-20 rounded-md border border-sand-200 bg-white px-2 py-1 text-xs"
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 text-xs text-sand-700">
+                  Other
+                  <input
+                    type="number"
+                    min={10}
+                    step={5}
+                    value={defaultDurations.other}
+                    onChange={(event) =>
+                      setDefaultDurations((prev) => ({
+                        ...prev,
+                        other: Number(event.target.value),
+                      }))
+                    }
+                    className="w-20 rounded-md border border-sand-200 bg-white px-2 py-1 text-xs"
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex items-center justify-between text-xs text-sand-600">
+                <button
+                  type="button"
+                  onClick={saveDefaultDurations}
+                  className="rounded-full border border-sand-300 bg-white px-3 py-1 font-semibold text-slateBlue-700"
+                >
+                  Save default durations
+                </button>
+                {defaultsSavedAt && <span>Saved {defaultsSavedAt}</span>}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -415,6 +580,13 @@ export default function Home() {
               <h2 className="text-lg font-semibold text-slateBlue-900">3. Optimized Slates</h2>
               <p className="text-sm text-sand-700">Drag to reorder for clinical priorities.</p>
             </div>
+            <button
+              type="button"
+              onClick={resetDurationOverrides}
+              className="rounded-full border border-slateBlue-200 px-4 py-2 text-xs font-semibold text-slateBlue-700"
+            >
+              Reset default case duration
+            </button>
           </div>
 
           <div className="mt-4 rounded-lg border border-sand-200 bg-white/70 px-4 py-3 text-sm text-sand-800">
@@ -422,6 +594,9 @@ export default function Home() {
             <p className="mt-1">{blockMinutes} minutes</p>
             <p className="mt-2 text-xs text-sand-700">
               Standard day: 08:00–16:00 (480 min). 2nd &amp; 4th Thursday: 09:00–16:00 (420 min).
+            </p>
+            <p className="mt-1 text-xs text-sand-600">
+              Case times include turnaround time.
             </p>
           </div>
 
@@ -446,6 +621,13 @@ export default function Home() {
                 const slateStart = slateDate
                   ? getBlockStartMinutes(new Date(`${slateDate}T00:00:00`))
                   : blockStartMinutes;
+                const totalMinutes = orderedSlate.reduce(
+                  (sum, item) => sum + item.estimatedDurationMin,
+                  0
+                );
+                const utilizationPct =
+                  slate.blockMinutes > 0 ? (totalMinutes / slate.blockMinutes) * 100 : 0;
+                const totalRiskScore = orderedSlate.reduce((sum, item) => sum + item.riskScore, 0);
                 return (
                   <div key={`slate-${slateIndex}`} className="rounded-2xl border border-sand-200 bg-white/70 p-5">
                     <div className="flex flex-wrap items-center justify-between gap-4">
@@ -454,7 +636,7 @@ export default function Home() {
                           Slate {slateIndex + 1}
                         </p>
                         <h3 className="mt-1 text-lg font-semibold text-slateBlue-900">
-                          {orderedSlate.length} cases · {slate.utilizationPct.toFixed(1)}% utilization
+                          {orderedSlate.length} cases · {utilizationPct.toFixed(1)}% utilization
                         </h3>
                         <p className="mt-1 text-xs text-sand-700">
                           Date {slateDate || "Not set"}
@@ -482,18 +664,24 @@ export default function Home() {
                       <div className="rounded-xl border border-sand-200 bg-white/70 p-3">
                         <p className="text-xs uppercase tracking-[0.2em] text-sand-600">Utilization</p>
                         <p className="mt-1 text-xl font-semibold text-slateBlue-900">
-                          {slate.utilizationPct.toFixed(1)}%
+                          {utilizationPct.toFixed(1)}%
                         </p>
                         <p className="text-xs text-sand-700">
-                          {slate.totalMinutes.toFixed(0)} / {slate.blockMinutes} min
+                          {totalMinutes.toFixed(0)} / {slate.blockMinutes} min
                         </p>
                       </div>
-                      <div className="rounded-xl border border-sand-200 bg-white/70 p-3">
+                      <div
+                        className="rounded-xl border border-sand-200 bg-white/70 p-3"
+                        title="Sum of case risk scores in this slate. Higher means more urgent cases are included."
+                      >
                         <p className="text-xs uppercase tracking-[0.2em] text-sand-600">Total Risk</p>
                         <p className="mt-1 text-xl font-semibold text-slateBlue-900">
-                          {slate.totalRiskScore.toFixed(1)}
+                          {totalRiskScore.toFixed(1)}
                         </p>
-                        <p className="text-xs text-sand-700">
+                        <p
+                          className="text-xs text-sand-700"
+                          title="Scaling factor that balances utilization minutes with clinical risk in the optimization."
+                        >
                           Util weight {slate.utilizationWeight.toFixed(3)}
                         </p>
                       </div>
@@ -527,25 +715,40 @@ export default function Home() {
                               <p className="text-xs text-sand-600">{item.procedureName}</p>
                             )}
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-sand-700">
-                            {item.flags.osa && (
-                              <span className="rounded-full bg-sand-100 px-2 py-1">OSA</span>
-                            )}
-                            {item.flags.diabetes && (
-                              <span className="rounded-full bg-sand-100 px-2 py-1">Diabetes</span>
-                            )}
-                          <span className="rounded-full bg-slateBlue-50 px-2 py-1 text-slateBlue-700">
-                            Risk {item.riskScore.toFixed(2)}
-                          </span>
-                          {item.inpatient && (
-                            <span className="rounded-full bg-sand-200 px-2 py-1 text-sand-800">
-                              Inpatient
-                            </span>
-                          )}
+                          <div className="flex flex-col items-end gap-2 text-xs text-sand-700">
+                            <div className="flex items-center gap-2">
+                              {item.flags.osa && (
+                                <span className="rounded-full bg-sand-100 px-2 py-1">OSA</span>
+                              )}
+                              {item.flags.diabetes && (
+                                <span className="rounded-full bg-sand-100 px-2 py-1">Diabetes</span>
+                              )}
+                              <span className="rounded-full bg-slateBlue-50 px-2 py-1 text-slateBlue-700">
+                                Risk {item.riskScore.toFixed(2)}
+                              </span>
+                              {item.inpatient && (
+                                <span className="rounded-full bg-sand-200 px-2 py-1 text-sand-800">
+                                  Inpatient
+                                </span>
+                              )}
+                            </div>
+                            <label className="flex items-center gap-2">
+                              Duration (min)
+                              <input
+                                type="number"
+                                min={10}
+                                step={5}
+                                value={item.estimatedDurationMin}
+                                onChange={(event) =>
+                                  updateDuration(slateIndex, item.caseId, event.target.value)
+                                }
+                                className="w-20 rounded-md border border-sand-200 bg-white px-2 py-1 text-xs"
+                              />
+                            </label>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
                   </div>
                 );
               })}
@@ -589,11 +792,18 @@ export default function Home() {
                 <div className="text-xs text-sand-700">
                   Benchmark {item.benchmarkWeeks}w · TTT {item.timeToTargetDays}d
                 </div>
-                {item.inpatient && (
-                  <span className="rounded-full bg-sand-200 px-2 py-1 text-xs text-sand-800">
-                    Inpatient
-                  </span>
-                )}
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {item.inpatient && (
+                    <span className="rounded-full bg-sand-200 px-2 py-1 text-xs text-sand-800">
+                      Inpatient
+                    </span>
+                  )}
+                  {selectedCaseIds.has(item.caseId) && (
+                    <span className="rounded-full bg-sand-200 px-2 py-1 text-xs text-sand-800">
+                      Slated
+                    </span>
+                  )}
+                </div>
                 {item.procedureName && (
                   <div className="text-xs text-sand-600">{item.procedureName}</div>
                 )}
