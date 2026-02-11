@@ -30,6 +30,11 @@ export default function Home() {
   const [flagOverrides, setFlagOverrides] = useState<
     Record<string, { osa?: boolean; diabetes?: boolean }>
   >({});
+  const [groups, setGroups] = useState<{ name: string; surgeons: string[] }[]>([]);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupSurgeons, setNewGroupSurgeons] = useState<Record<string, boolean>>({});
+  const [waitlistScope, setWaitlistScope] = useState<"surgeon" | "group">("surgeon");
+  const [selectedGroup, setSelectedGroup] = useState("");
   const [defaultDurations, setDefaultDurations] = useState({
     hysteroscopy: 60,
     laparoscopy: 90,
@@ -80,6 +85,7 @@ export default function Home() {
     }
   }, []);
 
+
   const surgeons = useMemo(() => {
     const unique = new Set(cases.map((item) => item.surgeonId));
     return Array.from(unique).sort((a, b) => a.localeCompare(b));
@@ -127,6 +133,25 @@ export default function Home() {
       return { ...item, estimatedDurationMin: override };
     });
   }, [filteredCases, durationOverrides]);
+
+  const waitlistCases = useMemo(() => {
+    if (waitlistScope === "group" && selectedGroup) {
+      const group = groups.find((item) => item.name === selectedGroup);
+      if (!group) return filteredCases;
+      const set = new Set(group.surgeons);
+      return casesWithDefaults.filter((item) => set.has(item.surgeonId));
+    }
+    return filteredCases;
+  }, [waitlistScope, selectedGroup, groups, casesWithDefaults, filteredCases]);
+
+  const waitlistCasesWithOverrides = useMemo(() => {
+    if (Object.keys(durationOverrides).length === 0) return waitlistCases;
+    return waitlistCases.map((item) => {
+      const override = durationOverrides[item.caseId];
+      if (!override) return item;
+      return { ...item, estimatedDurationMin: override };
+    });
+  }, [waitlistCases, durationOverrides]);
 
   const sortForWaitlist = (items: PatientCase[]) => {
     const order = [2, 4, 6, 12, 26];
@@ -340,8 +365,8 @@ export default function Home() {
   };
 
   const orderedByUrgency = useMemo(() => {
-    return sortForWaitlist(filteredCasesWithOverrides);
-  }, [filteredCasesWithOverrides, priorityMode]);
+    return sortForWaitlist(waitlistCasesWithOverrides);
+  }, [waitlistCasesWithOverrides, priorityMode]);
 
   const selectedCaseIds = useMemo(() => {
     const ids = new Set<string>();
@@ -353,6 +378,8 @@ export default function Home() {
 
   const downloadPriorityCsv = () => {
     if (orderedByUrgency.length === 0) return;
+    const label =
+      waitlistScope === "group" && selectedGroup ? selectedGroup : selectedSurgeon || "all";
     const rows = [
       [
         "order",
@@ -382,7 +409,7 @@ export default function Home() {
       ]);
     });
     const csv = rows.map((row) => row.join(",")).join("\n");
-    downloadFile(`priority_waitlist_${selectedSurgeon || "all"}.csv`, csv);
+    downloadFile(`priority_waitlist_${label}.csv`, csv);
   };
 
   const scrollToAbout = () => {
@@ -569,6 +596,14 @@ export default function Home() {
                 </button>
                 {defaultsSavedAt && <span>Saved {defaultsSavedAt}</span>}
               </div>
+              <div className="mt-3 flex items-center justify-between text-xs text-sand-600">
+                <a
+                  href="#groups"
+                  className="rounded-full border border-sand-300 bg-white/70 px-3 py-1 font-semibold text-slateBlue-700"
+                >
+                  Surgeon Groups
+                </a>
+              </div>
             </div>
           </div>
         </div>
@@ -618,6 +653,8 @@ export default function Home() {
                 ))}
               </select>
             </label>
+
+            
           </div>
         </div>
       </section>
@@ -760,6 +797,7 @@ export default function Home() {
                             <p className="text-xs text-sand-700">
                               Benchmark {item.benchmarkWeeks}w · TTT {item.timeToTargetDays}d · {item.estimatedDurationMin}m
                             </p>
+                            <p className="text-xs text-sand-600">Surgeon: {item.surgeonId}</p>
                             {item.procedureName && (
                               <p className="text-xs text-sand-600">{item.procedureName}</p>
                             )}
@@ -837,9 +875,11 @@ export default function Home() {
                   : "Sorted by urgency class (2w→26w), then days to target."}
               </p>
               <p className="mt-1 text-xs text-sand-600">
-                {selectedSurgeon
-                  ? `${orderedByUrgency.length} cases for ${selectedSurgeon}`
-                  : `${orderedByUrgency.length} cases`}
+                {waitlistScope === "group" && selectedGroup
+                  ? `${orderedByUrgency.length} cases for ${selectedGroup}`
+                  : selectedSurgeon
+                    ? `${orderedByUrgency.length} cases for ${selectedSurgeon}`
+                    : `${orderedByUrgency.length} cases`}
               </p>
             </div>
             <button
@@ -849,6 +889,42 @@ export default function Home() {
             >
               Export priority list
             </button>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-sand-700">
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                name="waitlistScope"
+                value="surgeon"
+                checked={waitlistScope === "surgeon"}
+                onChange={() => setWaitlistScope("surgeon")}
+              />
+              Selected surgeon only
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                name="waitlistScope"
+                value="group"
+                checked={waitlistScope === "group"}
+                onChange={() => setWaitlistScope("group")}
+              />
+              Surgeon group
+            </label>
+            {waitlistScope === "group" && (
+              <select
+                value={selectedGroup}
+                onChange={(event) => setSelectedGroup(event.target.value)}
+                className="rounded-md border border-sand-200 bg-white px-2 py-1 text-xs"
+              >
+                {groups.length === 0 && <option value="">No groups</option>}
+                {groups.map((group) => (
+                  <option key={group.name} value={group.name}>
+                    {group.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div className="mt-4 flex flex-col gap-2 text-sm">
@@ -863,6 +939,7 @@ export default function Home() {
                 <div className="text-xs text-sand-700">
                   Benchmark {item.benchmarkWeeks}w · TTT {item.timeToTargetDays}d
                 </div>
+                <div className="text-xs text-sand-600">Surgeon: {item.surgeonId}</div>
                 <div className="mt-1 flex flex-wrap gap-2">
                   {item.flags?.diabetes && (
                     <span className="rounded-full bg-sand-100 px-2 py-1 text-xs text-sand-800">
@@ -917,6 +994,67 @@ export default function Home() {
                 No cases loaded for this surgeon.
               </div>
             )}
+          </div>
+        </div>
+      </section>
+
+      <section id="groups" className="card p-6 scroll-mt-24">
+        <h2 className="text-lg font-semibold text-slateBlue-900">Surgeon Groups</h2>
+        <p className="text-sm text-sand-700">
+          Create custom surgeon groups for group-level priority waitlists.
+        </p>
+        <div className="mt-4">
+          <div className="rounded-lg border border-sand-200 bg-white/70 px-4 py-3 text-sm text-sand-800">
+            <p className="font-semibold text-sand-900">Surgeon groups</p>
+            <div className="mt-3 grid gap-3">
+              <label className="flex flex-col gap-2 text-xs text-sand-700">
+                Group name
+                <input
+                  type="text"
+                  value={newGroupName}
+                  onChange={(event) => setNewGroupName(event.target.value)}
+                  className="rounded-md border border-sand-200 bg-white px-2 py-1 text-xs"
+                />
+              </label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {surgeons.map((surgeon) => (
+                  <label
+                    key={`group-${surgeon}`}
+                    className="flex items-center gap-2 text-xs text-sand-700"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(newGroupSurgeons[surgeon])}
+                      onChange={(event) =>
+                        setNewGroupSurgeons((prev) => ({
+                          ...prev,
+                          [surgeon]: event.target.checked,
+                        }))
+                      }
+                    />
+                    {surgeon}
+                  </label>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const name = newGroupName.trim();
+                  const selected = Object.entries(newGroupSurgeons)
+                    .filter(([, value]) => value)
+                    .map(([key]) => key);
+                  if (!name || selected.length === 0) return;
+                  setGroups((prev) => [...prev, { name, surgeons: selected }]);
+                  setSelectedGroup(name);
+                  setWaitlistScope("group");
+                  setNewGroupName("");
+                  setNewGroupSurgeons({});
+                }}
+                className="rounded-full border border-sand-300 bg-white px-3 py-1 text-xs font-semibold text-slateBlue-700"
+              >
+                Save group
+              </button>
+            </div>
           </div>
         </div>
       </section>
