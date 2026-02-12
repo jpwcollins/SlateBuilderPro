@@ -42,6 +42,7 @@ export default function Home() {
     other: 60,
   });
   const [defaultsSavedAt, setDefaultsSavedAt] = useState<string | null>(null);
+  const [showMetrics, setShowMetrics] = useState(false);
   const [priorityMode, setPriorityMode] = useState<"ttt" | "urgency_then_ttt">(
     "urgency_then_ttt"
   );
@@ -86,11 +87,6 @@ export default function Home() {
   }, []);
 
 
-  const surgeons = useMemo(() => {
-    const unique = new Set(cases.map((item) => item.surgeonId));
-    return Array.from(unique).sort((a, b) => a.localeCompare(b));
-  }, [cases]);
-
   const applyDefaultDuration = (item: PatientCase): PatientCase => {
     const name = (item.procedureName ?? "").toLowerCase();
     let duration = defaultDurations.other;
@@ -119,6 +115,56 @@ export default function Home() {
   const casesWithDefaults = useMemo(() => {
     return cases.map((item) => applyFlagOverrides(applyDefaultDuration(item)));
   }, [cases, defaultDurations, flagOverrides]);
+
+  const surgeons = useMemo(() => {
+    const unique = new Set(cases.map((item) => item.surgeonId));
+    return Array.from(unique).sort((a, b) => a.localeCompare(b));
+  }, [cases]);
+
+  const surgeonStats = useMemo(() => {
+    const map = new Map<
+      string,
+      { count: number; maxWait: number; avgWait: number }
+    >();
+    casesWithDefaults.forEach((item) => {
+      const waitProxy = -item.timeToTargetDays;
+      const current = map.get(item.surgeonId) ?? {
+        count: 0,
+        maxWait: waitProxy,
+        avgWait: 0,
+      };
+      const nextCount = current.count + 1;
+      const nextAvg = (current.avgWait * current.count + waitProxy) / nextCount;
+      const nextMax = Math.max(current.maxWait, waitProxy);
+      map.set(item.surgeonId, {
+        count: nextCount,
+        maxWait: nextMax,
+        avgWait: nextAvg,
+      });
+    });
+    return Array.from(map.entries()).map(([surgeon, stats]) => ({
+      surgeon,
+      ...stats,
+    }));
+  }, [casesWithDefaults]);
+
+  const topByCount = useMemo(() => {
+    return [...surgeonStats]
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [surgeonStats]);
+
+  const topByLongestWait = useMemo(() => {
+    return [...surgeonStats]
+      .sort((a, b) => b.maxWait - a.maxWait)
+      .slice(0, 5);
+  }, [surgeonStats]);
+
+  const topByLowestAvgWait = useMemo(() => {
+    return [...surgeonStats]
+      .sort((a, b) => a.avgWait - b.avgWait)
+      .slice(0, 5);
+  }, [surgeonStats]);
 
   const filteredCases = useMemo(() => {
     if (!selectedSurgeon) return casesWithDefaults;
@@ -440,6 +486,13 @@ export default function Home() {
             className="rounded-full border border-sand-300 bg-white/70 px-3 py-1 font-semibold text-slateBlue-700"
           >
             About SlateBuilder Pro
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowMetrics(true)}
+            className="rounded-full border border-sand-300 bg-white/70 px-3 py-1 font-semibold text-slateBlue-700"
+          >
+            Advanced Metrics
           </button>
         </div>
         <p className="max-w-2xl text-base text-sand-800">
@@ -1067,6 +1120,58 @@ export default function Home() {
           for any errors or omissions in outputs.
         </p>
       </section>
+
+      {showMetrics && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slateBlue-900">Advanced Metrics</h2>
+              <button
+                type="button"
+                onClick={() => setShowMetrics(false)}
+                className="rounded-full border border-sand-300 px-3 py-1 text-xs font-semibold text-slateBlue-700"
+              >
+                Close
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-sand-600">
+              Wait-time metrics use time-to-target as a proxy (lower TTT = longer waiting).
+            </p>
+            <div className="mt-4 grid gap-4 sm:grid-cols-3">
+              <div className="rounded-xl border border-sand-200 bg-sand-50 p-3 text-xs text-sand-800">
+                <p className="font-semibold text-sand-900">Most cases waiting</p>
+                <ul className="mt-2 flex flex-col gap-1">
+                  {topByCount.map((item) => (
+                    <li key={`count-${item.surgeon}`}>
+                      {item.surgeon} · {item.count}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="rounded-xl border border-sand-200 bg-sand-50 p-3 text-xs text-sand-800">
+                <p className="font-semibold text-sand-900">Longest waiting patients</p>
+                <ul className="mt-2 flex flex-col gap-1">
+                  {topByLongestWait.map((item) => (
+                    <li key={`max-${item.surgeon}`}>
+                      {item.surgeon} · {item.maxWait.toFixed(1)} days
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="rounded-xl border border-sand-200 bg-sand-50 p-3 text-xs text-sand-800">
+                <p className="font-semibold text-sand-900">Lowest average wait time</p>
+                <ul className="mt-2 flex flex-col gap-1">
+                  {topByLowestAvgWait.map((item) => (
+                    <li key={`avg-${item.surgeon}`}>
+                      {item.surgeon} · {item.avgWait.toFixed(1)} days
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
